@@ -203,6 +203,11 @@ public class InvokeToolConfirmationDialog extends Composite {
       // Check if parent is still valid before using it
       if (parent != null && !parent.isDisposed()) {
         parent.layout();
+        // Ensure the chat content viewer scrolls to bottom after layout so that any
+        // newly revealed content is visible to the user.
+        SwtUtils.invokeOnDisplayThreadAsync(() -> {
+          scrollToCancel(parent);
+        }, parent);
       }
     });
     continueButton.setData(CssConstants.CSS_CLASS_NAME_KEY, "btn-primary");
@@ -245,8 +250,18 @@ public class InvokeToolConfirmationDialog extends Composite {
         // Check if parent is still valid before using it
         if (parent != null && !parent.isDisposed()) {
           parent.layout();
+          // Scroll to bottom to reveal cancel label if it was created
+          scrollToCancel(parent);
         }
       }, this);
+    }
+  }
+
+  private void scrollToCancel(Composite parent) {
+    ChatContentViewer viewer = SwtUtils.findParentOfType(parent, ChatContentViewer.class);
+    if (viewer != null) {
+      viewer.refreshScrollerLayout();
+      viewer.forceScrollToBottom();
     }
   }
 

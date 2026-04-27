@@ -3,6 +3,7 @@
 
 package com.microsoft.copilot.eclipse.ui.chat;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -11,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.e4.core.services.events.IEventBroker;
+import org.eclipse.jface.util.Throttler;
 import org.eclipse.lsp4j.WorkDoneProgressKind;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.ScrolledComposite;
@@ -59,6 +61,8 @@ public class ChatContentViewer extends ScrolledComposite {
   private BaseTurnWidget latestTurnWidget;
   // Auto-scroll state management
   private boolean autoScrollEnabled;
+  // Throttler for forceScrollToBottom – coalesces rapid calls during streaming
+  private Throttler forceScrollThrottler;
 
   /**
    * Create the composite.
@@ -111,6 +115,12 @@ public class ChatContentViewer extends ScrolledComposite {
     this.serviceManager = serviceManager;
 
     this.autoScrollEnabled = true;
+    this.forceScrollThrottler = new Throttler(this.getDisplay(), Duration.ofMillis(350), () -> {
+      if (!this.isDisposed()) {
+        cmpContent.layout(true, true);
+        scrollToBottom();
+      }
+    });
   }
 
   /**
@@ -204,9 +214,17 @@ public class ChatContentViewer extends ScrolledComposite {
       }
       refreshScrollerLayout();
 
-      // Auto-scroll to bottom if enabled
-      if (shouldAutoScrollToBottom()) {
-        scrollToBottom();
+      // For agent-mode responses (agent rounds/tool calls) we always force the view
+      // to scroll to the bottom so prompts that require user action (e.g. Continue,
+      // permission dialogs) are visible even if the user previously scrolled away.
+      if (value.getAgentRounds() != null && !value.getAgentRounds().isEmpty()) {
+        // Use a forced scroll to ensure visibility regardless of manual scroll state.
+        forceScrollToBottom();
+      } else {
+        // Auto-scroll to bottom if enabled for regular chat-mode responses
+        if (shouldAutoScrollToBottom()) {
+          scrollToBottom();
+        }
       }
 
       String errMsg = value.getErrorMessage();
@@ -377,10 +395,29 @@ public class ChatContentViewer extends ScrolledComposite {
    * Scroll to the bottom.
    */
   private void scrollToBottom() {
-    ScrollBar verticalBar = this.getVerticalBar();
-    if (verticalBar != null) {
-      this.setOrigin(0, verticalBar.getMaximum());
+    if (this.isDisposed()) {
+      return;
     }
+
+    Rectangle clientArea = this.getClientArea();
+    // compute content height with current client width
+    Point containerSize = cmpContent.computeSize(clientArea.width, SWT.DEFAULT);
+    int contentHeight = containerSize.y;
+    int originY = Math.max(0, contentHeight - clientArea.height);
+    this.setOrigin(0, originY);
+  }
+
+  /**
+   * Force the view to scroll to the bottom regardless of the user's manual scroll state. This is
+   * used for important UI prompts (like tool confirmations) to ensure they are visible even if the
+   * user had scrolled away.
+   * <p>
+   * Calls are throttled via {@link Throttler}: rapid successive calls (e.g. during streaming
+   * agent-round progress events) are coalesced so that only one scroll task fires per burst,
+   * avoiding jank.
+   */
+  public void forceScrollToBottom() {
+    forceScrollThrottler.throttledExec();
   }
 
   /**

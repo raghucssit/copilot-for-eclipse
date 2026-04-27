@@ -590,6 +590,25 @@ public abstract class BaseTurnWidget extends Composite {
 
     this.getParent().layout();
 
+    // Ensure the chat content viewer scrolls to show the newly created confirmation
+    // dialog/footer area. Walk up the composite hierarchy to find a ChatContentViewer
+    // and request scrolling. Use async exec because layout needs to complete first.
+    SwtUtils.invokeOnDisplayThreadAsync(() -> {
+      ChatContentViewer viewer = SwtUtils.findParentOfType(this.getParent(), ChatContentViewer.class);
+      if (viewer != null) {
+        viewer.refreshScrollerLayout();
+        // Prefer showing the specific confirmation dialog control if available
+        if (this.confirmDialog != null && !this.confirmDialog.isDisposed()) {
+          viewer.showControl(this.confirmDialog);
+        } else {
+          // Fallback: force-scrolling to bottom
+          viewer.forceScrollToBottom();
+        }
+      }
+
+    }, this.getParent());
+
+
     return toolConfirmationFuture;
   }
 
